@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/guigu-icon.svg" alt="Guigu" width="120" />
+
 # Guigu
 
 **AI 自主渗透测试平台**
@@ -77,7 +79,15 @@ chmod +x deploy.sh && ./deploy.sh
 
 首次运行自动生成权限 `0600` 的 `.env`（含随机 PostgreSQL 密码），已有 `.env` 不会被覆盖。
 
-### 方式二：源码构建
+### 方式二：直接拉取镜像
+
+```bash
+docker pull ghcr.io/banannna69/guigu:latest
+```
+
+镜像支持 `linux/amd64` 与 `linux/arm64`。打 tag 时由 GitHub Actions 自动构建发布。
+
+### 方式三：源码构建
 
 ```bash
 # 需要 Go 1.26+、Node.js 20+

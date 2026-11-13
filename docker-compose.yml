@@ -22,9 +22,9 @@ services:
       context: .
       dockerfile: Dockerfile.source
       args:
-        ARTEX_VERSION: ${ARTEX_VERSION:-1.0.0}
+        GUIGU_VERSION: ${GUIGU_VERSION:-1.0.0}
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
-    image: guigu:${ARTEX_TAG:-local}
+    image: guigu:${GUIGU_TAG:-local}
     depends_on:
       postgres:
         condition: service_healthy
