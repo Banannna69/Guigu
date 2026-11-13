@@ -3,7 +3,7 @@
 //   - AssetHostRow / AssetHostFilter / AssetHostService：主机投影行、查询条件与服务条目结构。
 //   - QueryHosts：按过滤条件查询资产并折叠为主机行（含命中发现统计）。
 //   - buildAssetHostRows / assetHostBuilder：把资产列表流式折叠为去重、合并后的主机行集合。
-//   - containsAssetID / hostServiceLabel：资产 id 二分查找与服务显示名辅助。
+//   - hostServiceLabel：服务显示名辅助。
 
 package db
 
@@ -120,23 +120,56 @@ func (s *AssetStore) QueryHosts(f AssetHostFilter) ([]AssetHostRow, int, error) 
 	}
 
 	hosts := buildAssetHostRows(assets, companyNames, hits)
-	filtered := hosts[:0]
-	for _, row := range hosts {
-		companyOK, taskOK, dslOK := f.CompanyID == 0, f.TaskID == 0, dslMatches == nil
-		for _, a := range assets {
-			if !containsAssetID(row.AssetIDs, a.ID) {
-				continue
-			}
-			if a.CompanyID != nil && *a.CompanyID == f.CompanyID {
-				companyOK = true
-			}
+
+	// 预先按资产 id 建两张索引表，替代「每个 host 都重扫一遍全部 assets」。
+	//
+	// 原来是 O(hosts × assets)：几千个 host 乘上万个资产就是千万次比较，而且
+	// containsAssetID 本身还是二分查找。这里改成一次 O(assets) 建表、每个 host
+	// 只查它自己那几个资产，整体降到 O(assets + Σhost资产数)。
+	//
+	// 三个过滤条件是「或」的关系——只要 host 下任意一个资产命中就算命中，
+	// 所以按资产 id 预聚合是等价变换，不改变结果。
+	type assetFlags struct {
+		company bool // 该资产归属被筛选的公司
+		task    bool // 该资产属于被筛选的任务
+		dsl     bool // 该资产被 DSL 命中
+	}
+	flags := make(map[int64]*assetFlags, len(assets))
+	for _, a := range assets {
+		fl := &assetFlags{}
+		if a.CompanyID != nil && f.CompanyID != 0 && *a.CompanyID == f.CompanyID {
+			fl.company = true
+		}
+		if f.TaskID != 0 {
 			for _, taskID := range a.TaskIDs {
 				if taskID == f.TaskID {
-					taskOK = true
+					fl.task = true
+					break
 				}
 			}
-			if dslMatches[a.ID] {
-				dslOK = true
+		}
+		if dslMatches != nil && dslMatches[a.ID] {
+			fl.dsl = true
+		}
+		flags[a.ID] = fl
+	}
+
+	filtered := hosts[:0]
+	for _, row := range hosts {
+		// 未设置该维度时视为通过（与原来的零值语义一致）。
+		companyOK := f.CompanyID == 0
+		taskOK := f.TaskID == 0
+		dslOK := dslMatches == nil
+		for _, id := range row.AssetIDs {
+			fl := flags[id]
+			if fl == nil {
+				continue
+			}
+			companyOK = companyOK || fl.company
+			taskOK = taskOK || fl.task
+			dslOK = dslOK || fl.dsl
+			if companyOK && taskOK && dslOK {
+				break // 三个都满足了，不必再看这个 host 的其它资产
 			}
 		}
 		if companyOK && taskOK && dslOK {
@@ -155,11 +188,6 @@ func (s *AssetStore) QueryHosts(f AssetHostFilter) ([]AssetHostRow, int, error) 
 		filtered = filtered[:f.Limit]
 	}
 	return filtered, total, nil
-}
-
-func containsAssetID(ids []int64, id int64) bool {
-	i := sort.Search(len(ids), func(i int) bool { return ids[i] >= id })
-	return i < len(ids) && ids[i] == id
 }
 
 type assetHostBuilder struct {

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"reflect"
 	"strconv"
 	"testing"
@@ -79,5 +80,79 @@ func TestQueryHostsAndExactAssetFindingFilter(t *testing.T) {
 	items, findingTotal, err := d.ListFindingsPage(FindingFilter{TaskID: strconv.FormatInt(tk.ID, 10), AssetIDs: rows[0].AssetIDs}, 1, 20)
 	if err != nil || findingTotal != 1 || len(items) != 1 {
 		t.Fatalf("exact host asset finding filter failed: total=%d items=%d err=%v", findingTotal, len(items), err)
+	}
+}
+
+// TestQueryHostsNoFilterReturnsAll 验证不加过滤时把所有 host 都返回。
+//
+// QueryHosts 的三维过滤刚从「每个 host 重扫全部 assets」改成按资产 id 预建索引表，
+// 这类重构最容易出的错是「条件写反」导致本该返回的被滤掉。这里用一个无过滤的
+// 查询做基线：插入 N 个 IP，返回的 host 数必须是 N。
+func TestQueryHostsNoFilterReturnsAll(t *testing.T) {
+	d, as, _ := testSetup(t)
+	defer d.Close()
+
+	const n = 25
+	var ips []string
+	for i := 0; i < n; i++ {
+		ip := fmt.Sprintf("10.87.%d.%d", i/20, (i%20)+1)
+		ips = append(ips, ip)
+		if _, err := as.UpsertIP(UpsertIPReq{IP: ip}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	defer func() {
+		for _, ip := range ips {
+			d.Exec(`DELETE FROM assets WHERE ip = $1`, ip)
+		}
+	}()
+
+	rows, total, err := as.QueryHosts(AssetHostFilter{Limit: 1000})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if total != len(rows) {
+		t.Fatalf("total=%d 与返回行数 %d 不一致", total, len(rows))
+	}
+	// 库里可能有别的测试留下的资产，所以只断言「我们插的都在」
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.IP] = true
+	}
+	for _, ip := range ips {
+		if !got[ip] {
+			t.Fatalf("无过滤查询漏掉了 %s（过滤条件写反了？）", ip)
+		}
+	}
+}
+
+// TestQueryHostsTaskFilterExcludesOthers 验证任务过滤真的生效：
+// 指定一个不存在的 taskID 时，不该返回那些没关联到该任务的 host。
+func TestQueryHostsTaskFilterExcludesOthers(t *testing.T) {
+	d, as, _ := testSetup(t)
+	defer d.Close()
+
+	const n = 10
+	var ips []string
+	for i := 0; i < n; i++ {
+		ip := fmt.Sprintf("10.86.0.%d", i+1)
+		ips = append(ips, ip)
+		if _, err := as.UpsertIP(UpsertIPReq{IP: ip}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	defer func() {
+		for _, ip := range ips {
+			d.Exec(`DELETE FROM assets WHERE ip = $1`, ip)
+		}
+	}()
+
+	// 一个几乎不可能存在的 taskID
+	rows, total, err := as.QueryHosts(AssetHostFilter{TaskID: 999999999, Limit: 1000})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if total != 0 || len(rows) != 0 {
+		t.Fatalf("任务过滤未生效：total=%d rows=%d，期望 0", total, len(rows))
 	}
 }
