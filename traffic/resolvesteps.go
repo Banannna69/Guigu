@@ -60,7 +60,7 @@ func (t *Traffic) resolveStepInWindow(sinceUnix, untilUnix, cursor int64, method
 	// paraphrased/over-specific field can't zero out a match that should succeed.
 	tryNarrow := func(cond string, arg any) {
 		w, a := where+" AND "+cond, append(append([]any{}, args...), arg)
-		if len(t.queryIDs(w, a)) >= 1 {
+		if ids, _ := t.queryIDs(w, a); len(ids) >= 1 {
 			where, args = w, a
 		}
 	}
@@ -72,7 +72,7 @@ func (t *Traffic) resolveStepInWindow(sinceUnix, untilUnix, cursor int64, method
 	}
 	if t.fts {
 		for _, disc := range respDiscriminators(respText) {
-			if len(t.queryIDs(where, args)) <= 1 {
+			if ids, _ := t.queryIDs(where, args); len(ids) <= 1 {
 				break
 			}
 			tryNarrow("rowid IN (SELECT rowid FROM ex_fts WHERE ex_fts MATCH ?)", ftsQuote(disc))
@@ -87,20 +87,26 @@ func (t *Traffic) resolveStepInWindow(sinceUnix, untilUnix, cursor int64, method
 }
 
 // queryIDs returns up to 10 exchange ids matching where (newest first).
-func (t *Traffic) queryIDs(where string, args []any) []string {
+//
+// 中途出错时把已读到的返回、并把 error 一并交出。调用点用 len() 判断「还剩几个
+// 候选」来决定要不要继续收窄条件；如果错误被吞掉、ids 比实际少，判定就会从
+// 「还有多个」翻成「只剩一个」，于是收窄被跳过或匹配失败——表现是报告里的复现
+// 步骤静默丢失流量关联，而且没有任何日志。所以这里把 error 显式交出去。
+func (t *Traffic) queryIDs(where string, args []any) ([]string, error) {
 	rows, err := t.db.Query(`SELECT id FROM exchanges WHERE `+where+` ORDER BY ts DESC LIMIT 10`, args...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var ids []string
 	for rows.Next() {
 		var id string
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
+		if err := rows.Scan(&id); err != nil {
+			return ids, err
 		}
+		ids = append(ids, id)
 	}
-	return ids
+	return ids, rows.Err()
 }
 
 // 复现步骤的请求文本有两种形态：原始 HTTP 报文，或 agent 执行的 curl/shell 命令。

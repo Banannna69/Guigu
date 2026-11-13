@@ -116,6 +116,11 @@ func (s *Server) flushSideSnapshots() {
 		if err == nil || errors.Is(err, db.ErrSideParentGone) {
 			if cur, ok := s.side.latest[key]; ok && cur.RunID == snap.RunID && cur.Version == snap.Version {
 				delete(s.side.latest, key)
+				// seen 也要清：它只用于「丢弃乱序到达的旧快照」。该 key 的最新一版
+				// 已落库、latest 也删了，说明这条侧问已经收尾——再留着它只是让
+				// map 无界增长（每个「任务×侧问会话」一个 key，进程活多久涨多久）。
+				// 万一之后真有一条迟到快照，重新记录一次即可，代价可忽略。
+				delete(s.side.seen, key)
 			}
 		} else if newer, ok := s.side.pending[key]; !ok || newer.RunID < snap.RunID || newer.RunID == snap.RunID && newer.Version < snap.Version {
 			s.side.pending[key] = snap

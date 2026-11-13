@@ -429,7 +429,11 @@ func checkOneProxy(ctx context.Context, idx int, masked, raw, target string, tim
 		res.Error = err.Error()
 		return res
 	}
+	// 这里刻意不用 safehttp 的 SSRF 守卫：代理验证本来就要连到用户配置的代理，
+	// 而代理常在内网或本机。但连接池必须关闭——「全量验证」一次会走到上百个
+	// 上游，每个新建一个 Transport 又不关空闲连接，等于一次性泄漏上百个连接池。
 	transport := &http.Transport{}
+	defer transport.CloseIdleConnections()
 	switch proxyURL.Scheme {
 	case "socks5", "socks5h":
 		// SOCKS5 交给 x/net/proxy 拨号:http.Transport 只认 HTTP 代理。

@@ -36,6 +36,7 @@ import (
 
 	"artex/agent"
 	"artex/db"
+	"artex/safehttp"
 	"norma/llm"
 	"norma/skill"
 )
@@ -2090,10 +2091,15 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build HTTP client with optional proxy.
-	transport := &http.Transport{}
-	if p := strings.TrimSpace(req.Proxy); p != "" {
-		if pu, err := url.Parse(p); err == nil {
+	// base_url 是用户填写的地址，所以走带 SSRF 守卫的 Transport：
+	// 否则一个指向 127.0.0.1 或云元数据端点(169.254.169.254)的 base_url
+	// 就能把响应内容读回来——这里正好会把响应写进错误信息回显到界面。
+	// 同时 defer CloseIdleConnections：每次请求新建 Transport 而不关闭空闲连接，
+	// 等于每次丢弃一个连接池，要等 GC 才回收。
+	transport := safehttp.Transport()
+	defer transport.CloseIdleConnections()
+	if px := strings.TrimSpace(req.Proxy); px != "" {
+		if pu, err := url.Parse(px); err == nil {
 			transport.Proxy = http.ProxyURL(pu)
 		}
 	}
