@@ -1,0 +1,37 @@
+.git
+**/node_modules
+web/.next
+web/out
+server/webui/dist
+/artex
+data
+config.json
+.env
+.env.*
+!.env.example
+*.db
+# 根 Dockerfile 需要预编译二进制（dist/artex-linux-<arch>/artex）；其余 dist 内容仍排除。
+# 先排除 dist 的直接子项，再逐级放行目录和二进制，兼容仍不支持直接恢复文件的 legacy builder。
+/dist/*
+!/dist/artex-linux-*/
+/dist/artex-linux-*/*
+!/dist/artex-linux-*/artex
+/screenshots
+transcripts
+# 敏感文件：绝不进入构建上下文（Dockerfile.source 的 COPY . . 会整体收进 builder 层）
+/jwt.key
+*.key
+*.pem
+config-export/
+# 注：不要排除 evidence/ —— 它是 Go 源码包（artex/evidence，被
+# server/finding_traffic*.go import），排除后 go build 直接失败。
+# 证据数据本身写在 data/ 下，已由上面的 `data` 规则排除。
+backup/
+/dev/
+bench/kv
+bench/debug
+bench/__pycache__
+bench/.env
+bench/scheduler.py
+bench/entrypoint_v2.sh
+bench/seed_v2.sh
