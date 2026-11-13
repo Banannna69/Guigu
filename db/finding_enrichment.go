@@ -14,6 +14,8 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -75,20 +77,77 @@ func (d *DB) GetFindingEnrichment(nodeID int64) (*FindingEnrichment, error) {
 	return e, err
 }
 
-// GetFindingEnrichments loads enrichments for a set of node ids (loop-based; the
-// per-task finding set is small). Missing ids are simply absent from the map.
+// GetFindingEnrichments loads enrichments for a set of node ids in ONE query.
+// Missing ids are simply absent from the map.
+//
+// 这原本是「循环调 GetFindingEnrichment」，注释还写着「the per-task finding set is
+// small」——但它的调用方是报告生成，一次最多 500 条。那个循环等于 500 次数据库
+// 往返，而报告页每点一次生成就要付一次。改成 = ANY($1) 一次取回后在内存分组。
 func (d *DB) GetFindingEnrichments(nodeIDs []int64) (map[int64]*FindingEnrichment, error) {
 	out := make(map[int64]*FindingEnrichment, len(nodeIDs))
-	for _, id := range nodeIDs {
-		e, err := d.GetFindingEnrichment(id)
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	// pq 风格的数组字面量：nodeIDs 全是 int64，直接拼安全。
+	ids := make([]string, len(nodeIDs))
+	for i, id := range nodeIDs {
+		ids[i] = strconv.FormatInt(id, 10)
+	}
+	arr := "{" + strings.Join(ids, ",") + "}"
+	rows, err := d.Query(feSelect+" WHERE node_id = ANY($1::bigint[])", arr)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		e, err := scanFE(rows)
 		if err != nil {
 			return out, err
 		}
-		if e != nil {
-			out[id] = e
+		out[e.NodeID] = e
+	}
+	return out, rows.Err()
+}
+
+// FindingSourceTranscripts loads source transcripts for a set of node ids in ONE
+// query per underlying relation instead of the 3-queries-per-node loop that
+// FindingSourceTranscript does. Missing/short transcripts are absent from the map.
+//
+// maxChars 对每条转录单独截断，与单条版本的语义一致。
+func (d *DB) FindingSourceTranscripts(nodeIDs []int64, maxChars int) (map[int64]string, error) {
+	out := make(map[int64]string, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	ids := make([]string, len(nodeIDs))
+	for i, id := range nodeIDs {
+		ids[i] = strconv.FormatInt(id, 10)
+	}
+	arr := "{" + strings.Join(ids, ",") + "}"
+
+	// 一次取回所有相关 activity 行（按 node 分组后各自截断）。
+	rows, err := d.Query(`
+SELECT en.id, COALESCE(NULLIF(en.payload->>'summary',''), en.payload->>'text','')
+FROM exploration_nodes en
+WHERE en.id = ANY($1::bigint[])`, arr)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return out, err
+		}
+		if r := []rune(text); len(r) > maxChars {
+			text = string(r[:maxChars])
+		}
+		if strings.TrimSpace(text) != "" {
+			out[id] = text
 		}
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // UpsertFindingEnrichment inserts or replaces the enrichment for a finding node.

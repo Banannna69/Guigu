@@ -121,6 +121,13 @@ func (r *outcomeRing) ratio() float64 {
 	return float64(fails) / float64(n)
 }
 
+// reset 清空窗口。绝不整体赋值 outcomeRing{}——那会拷贝正在被原子读写的字段，
+// 造成数据竞争且可能丢失清空效果。这里只做字段级写入。
+func (r *outcomeRing) reset() {
+	r.bits.Store(0)
+	r.n.Store(0)
+}
+
 // bitsOnes 数 1 的位数（Go 1.13+ 有 math/bits，这里避免多引一个包到热路径上）。
 func bitsOnes(x uint64) int64 {
 	var c int64
@@ -291,7 +298,12 @@ func (s *selector) ReportResult(proxyRaw string, ok bool) {
 			e.breakOpen.Store(time.Now().Add(breakCooldown).Unix())
 			e.failures.Store(0)
 			// 清空样本窗口：冷却结束后是「重新给一次机会」，不该带着旧账复出。
-			e.outcomes = outcomeRing{}
+			//
+			// 必须用 reset() 而不是 `e.outcomes = outcomeRing{}`：outcomeRing 内部
+			// 是两个 atomic 值，整体赋值既拷贝了正在被 push()/ratio() 原子读写的内容，
+			// 又让之后的读写指向不同的存储位置——go test -race 会直接报数据竞争，
+			// 而且「清空」可能丢失，导致半死出口带着旧账复出、占比降级判定失效。
+			e.outcomes.reset()
 		}
 		return
 	}

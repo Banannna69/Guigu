@@ -1768,3 +1768,29 @@ CREATE TABLE IF NOT EXISTS knowledge_config (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO knowledge_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- =====================================================================
+-- 漏洞富化：AI 生成 / 人工编辑的结构化漏洞数据，覆盖在探索图节点之上
+-- =====================================================================
+-- 以 exploration 节点 id 为主键（与 finding_evidence 对齐），发现页 / 报告 / MD 共用。
+-- 移植 report/findings 相关模块时漏了这张表的 DDL，导致 /api/findings/{id}/enrich
+-- 全部静默失败（调用点都用 _ 忽略了 error），用户看到的是「AI 分析一直没结果」。
+CREATE TABLE IF NOT EXISTS finding_enrichment (
+    node_id       BIGINT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',      -- 润色后的漏洞名称
+    target        TEXT NOT NULL DEFAULT '',      -- 受影响主机 / URL
+    module        TEXT NOT NULL DEFAULT '',
+    severity      TEXT NOT NULL DEFAULT '',      -- 人工可覆盖（空=沿用节点）
+    status        TEXT NOT NULL DEFAULT 'open',  -- open|confirmed|fixed|false_positive|ignored
+    cvss_score    REAL NOT NULL DEFAULT 0,
+    cvss_vector   TEXT NOT NULL DEFAULT '',
+    cvss_metrics  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    description   JSONB NOT NULL DEFAULT '[]'::jsonb,  -- string[]
+    test_process  JSONB NOT NULL DEFAULT '[]'::jsonb,  -- [{type,content}]
+    risk_analysis JSONB NOT NULL DEFAULT '[]'::jsonb,  -- string[]
+    remediation   JSONB NOT NULL DEFAULT '[]'::jsonb,  -- string[]
+    source        TEXT NOT NULL DEFAULT 'ai',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_finding_enrichment_status ON finding_enrichment(status);

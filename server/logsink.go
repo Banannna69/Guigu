@@ -10,6 +10,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -173,10 +174,15 @@ func (s *logSinkT) add(l LogLine) {
 		select {
 		case ch <- dbWriteReq{seq: l.Seq, ll: l}:
 		default:
-			// 【P-LOG】落库队列满静默丢 → 计数，每 100 条报一次（防刷屏，递归有界：
-			// 报告行本身也过 add，至多多计一条）。
+			// 落库队列满 → 计数，每 100 条报一次（防刷屏）。
+			//
+			// 这里绝不能调 log.Printf：Write 是 log.SetOutput 的目标，而 Go 的 log
+			// 包是在**持有 l.mu 的情况下**调用 Write 的。add 里再调 log.Printf 就会
+			// 重入同一把锁——永久阻塞。触发条件恰好是「日志量大 + DB 慢」这种最需要
+			// 日志的故障场景，一旦命中，进程里所有 log.Printf 全部挂死（planner、
+			// worker、HTTP handler 无一幸免）。直接写 stderr 保留可见性，绕开 log 的锁。
 			if n := s.dropped.Add(1); n%100 == 1 {
-				log.Printf("[WARN] [logsink] db writer behind: dropped %d log lines", n)
+				_, _ = fmt.Fprintf(s.out, "[WARN] [logsink] db writer behind: dropped %d log lines\n", n)
 			}
 		}
 	}

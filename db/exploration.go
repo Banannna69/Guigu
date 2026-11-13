@@ -900,6 +900,24 @@ WHERE exploration_id=$1 AND kind='intent' AND state='open'`, s.expID).Scan(&n)
 	return n, err
 }
 
+// CountNodesByState 数某类节点在指定状态下的数量。
+//
+// 为什么要它：概览接口原本用 ListByKind(kind, 100000) 把全部节点的完整 payload
+// 拉进内存再数 state，而前端每 5 秒轮询一次。意图上千条时那是每 5 秒几万行 JSONB
+// 的传输，只为得到两个整数。这里下推成 COUNT(*)，走 (exploration_id, kind) 索引。
+func (s *ExplorationStore) CountNodesByState(kind, state string) (int, error) {
+	var n int
+	// 空 state = 不计状态（数该类节点的总数）。
+	if state == "" {
+		err := s.db.QueryRow(`SELECT COUNT(*) FROM exploration_nodes
+WHERE exploration_id=$1 AND kind=$2`, s.expID, kind).Scan(&n)
+		return n, err
+	}
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM exploration_nodes
+WHERE exploration_id=$1 AND kind=$2 AND state=$3`, s.expID, kind, state).Scan(&n)
+	return n, err
+}
+
 // GetNode returns one node of this exploration by id (nil, nil if not found).
 func (s *ExplorationStore) GetNode(id int64) (*Node, error) {
 	n, err := scanNode(s.db.QueryRow(`SELECT `+nodeCols+` FROM exploration_nodes WHERE id=$1 AND exploration_id=$2`, id, s.expID))

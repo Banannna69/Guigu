@@ -1336,20 +1336,13 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	out["exploration"] = st
 
 	// per-task running state + heartbeat (distinct from "LLM configured").
-	intents, _ := t.Store.ListByKind(db.KindIntent, 100000)
-	inFlight := 0
-	for _, in := range intents {
-		if in.State == "running" {
-			inFlight++
-		}
-	}
-	goals, _ := t.Store.ListByKind(db.KindGoal, 10000)
-	goalsMet := 0
-	for _, g := range goals {
-		if g.State == "met" {
-			goalsMet++
-		}
-	}
+	//
+	// 用 COUNT 而不是把整类节点拉进内存数：前端的 dashboard 与任务详情页都是
+	// 每 5 秒轮询一次，而 ListByKind 会带上完整 payload。意图上千后那是每 5 秒
+	// 几万行 JSONB 的传输，只为得到「running 几条」「met 几个」这两个整数。
+	inFlight, _ := t.Store.CountNodesByState(db.KindIntent, "running")
+	goalsMet, _ := t.Store.CountNodesByState(db.KindGoal, "met")
+	goalsTotal, _ := t.Store.CountNodesByState(db.KindGoal, "")
 	last := s.engine.LastActivity(t.ID)
 	paused := s.engine.IsPaused(t.ID)
 	activeCalls := s.engine.ActiveLLMCalls(t.ID)
@@ -1379,7 +1372,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		"llm_in_flight": activeCalls,
 		"last_activity": last,
 		"stalled":       stalled,
-		"goals_total":   len(goals),
+		"goals_total":   goalsTotal,
 		"goals_met":     goalsMet,
 	}
 	writeJSON(w, 200, out)

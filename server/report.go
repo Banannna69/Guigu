@@ -13,6 +13,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -173,6 +174,22 @@ func (s *Server) buildReportInput(t *Task, q map[string][]string) *report.GenInp
 	idFilter := parseInt64Set(get("finding_ids"))
 
 	nodes, _ := t.Store.ListByKind(db.KindFinding, 500)
+
+	// 批量预取：报告最多收录 500 条漏洞，原来在循环里逐条查富化再逐条拉转录，
+	// 最坏是 1 + 500 + 500×3 ≈ 2000 次数据库往返——报告「点了半天没反应」的主因。
+	// 这里先收集要用的 node id，一次性把富化与转录取回来，循环内只查内存 map。
+	wanted := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if idFilter != nil && !idFilter[n.ID] {
+			continue
+		}
+		wanted = append(wanted, n.ID)
+	}
+	enrichByNode, enrErr := s.m.pg.GetFindingEnrichments(wanted)
+	if enrErr != nil {
+		log.Printf("[report] 批量读取富化失败（按无富化继续）: %v", enrErr)
+	}
+
 	findings := make([]report.FindingInput, 0, len(nodes))
 	for _, n := range nodes {
 		if idFilter != nil && !idFilter[n.ID] {
@@ -196,7 +213,7 @@ func (s *Server) buildReportInput(t *Task, q map[string][]string) *report.GenInp
 		}
 		// Reuse persisted enrichment (from the findings page "AI 分析") so the report
 		// is consistent with what the user reviewed and skips a redundant LLM call.
-		if enr, _ := s.m.pg.GetFindingEnrichment(n.ID); enr != nil {
+		if enr := enrichByNode[n.ID]; enr != nil {
 			if reuseEnrichment {
 				fi.Enrichment = reportEnrichmentFromDB(enr)
 			}
@@ -207,6 +224,9 @@ func (s *Server) buildReportInput(t *Task, q map[string][]string) *report.GenInp
 		// No persisted enrichment to reuse (fresh finding, or zh-TW/en-US
 		// regeneration) → ground the on-the-fly narrative in the real work
 		// transcript, same as the findings-page "AI 分析".
+		//
+		// 转录按需单取而不是预先全部批量拉：只有「没有富化」的漏洞才需要它，
+		// 而富化过的（用户已确认过的）通常占多数——预先全拉等于白拉几百份 4 万字转录。
 		if fi.Enrichment == nil {
 			fi.Transcript = s.m.pg.FindingSourceTranscript(n.ID, 40000)
 		}

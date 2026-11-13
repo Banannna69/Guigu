@@ -538,10 +538,20 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// now distinct node kinds. recent_facts surfaces fact summaries (esp.
 	// negative results) so the planner sees them in one call; full content
 	// via node_detail(id).
-	vulnNodes, _ := t.ts.ListByKind(db.KindFinding, 1000)
-	factNodes, _ := t.ts.ListByKind(db.KindFact, 1000) // newest first
-	out["findings_total"] = len(vulnNodes)             // 确认漏洞总数（目标判定看它）；明细见 finding_list（最新一窗）
-	out["facts"] = len(factNodes)                      // 探索事实/结论数（含否定结论）
+	// 计数用 COUNT，明细只取需要的那一窗。
+	//
+	// 原来是 ListByKind(kind, 1000) 各拉一次：nodeCols 含完整 payload JSONB，
+	// 所以每轮 planner 决策（以及每次 worker 执行）都要把 2000 个节点的 JSON
+	// 从 PG 搬到内存，只为得到两个 len()。改成 COUNT(*) 下推 + 只取前 N 条明细：
+	// 按 id 降序排，最新的就在最前，截断取前 N 条与全量取后取前 N 条等价。
+	if n, err := t.ts.CountNodesByState(db.KindFinding, ""); err == nil {
+		out["findings_total"] = n // 确认漏洞总数（目标判定看它）；明细见 finding_list
+	}
+	if n, err := t.ts.CountNodesByState(db.KindFact, ""); err == nil {
+		out["facts"] = n // 探索事实/结论数（含否定结论）
+	}
+	vulnNodes, _ := t.ts.ListByKind(db.KindFinding, 30) // 只为一窗明细，不需全量
+	factNodes, _ := t.ts.ListByKind(db.KindFact, 30)    // newest first
 	// findings 是任务里最高价值的产物 → 概览带最新一窗（≤10 条，vulnNodes 已按 id 降序即最新在前），
 	// 让 planner 每轮判目标时一眼看到最近确认的漏洞；全量/更早的用 list_findings 取。
 	// 每条只留 {id, summary, from_intent?}：from_intent 是产生本漏洞的意图。
