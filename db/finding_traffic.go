@@ -30,7 +30,7 @@ var (
 
 // This lock covers the evidence filesystem as well as its SQL references. All
 // processes sharing the database use it, including readers, exports and GC.
-const findingEvidenceLockKey int64 = 7337741004
+// findingEvidenceLockKey 见 db/lockkeys.go（集中登记，防止与其他锁撞号）
 
 func (d *DB) WithEvidenceTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := d.BeginTx(ctx, nil)

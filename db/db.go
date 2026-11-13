@@ -28,7 +28,7 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const schemaMigrationLockKey int64 = 7337741001
+// schemaMigrationLockKey 见 db/lockkeys.go（集中登记）
 
 // maxOpenConns 是连接池上限，见 Open 里的说明。取值远低于 PostgreSQL 默认的
 // max_connections=100，同时远高于应用自身的嵌套取连接深度（启动期的 schema

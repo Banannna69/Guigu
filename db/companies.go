@@ -90,9 +90,7 @@ func ValidateCompanyScopeInputBounds(inputs []ScopeInput) error {
 
 // Scope writes rebuild derived asset ownership globally, so serialize them to
 // ensure the committed attribution always reflects the latest committed rules.
-// This key is reserved for company mutations; 7337741001 is the schema lock and
-// 7337741002 is the cross-package test-suite lock.
-const companyScopeMutationLock int64 = 7337741003
+// companyScopeMutationLock 见 db/lockkeys.go（集中登记，防止与其他锁撞号）
 
 // Companies returns the company store.
 func (d *DB) Companies() *CompanyStore { return &CompanyStore{db: d} }

@@ -35,12 +35,33 @@ func (m *Manager) StartProxyPoolHealthCheck() {
 		log.Printf("[proxypool] 主动健康检查已关闭（proxypool_health_minutes=0）")
 		return
 	}
+	m.proxyHealthStop = make(chan struct{})
+	m.proxyHealthWG.Add(1)
 	go func() {
-		// 启动延迟：避开进程刚起来的流量高峰，也给 hostd/traffic 代理留出时间。
-		time.Sleep(90 * time.Second)
+		defer m.proxyHealthWG.Done()
+		// panic 恢复：一轮探测里只要有一个上游的响应解析 panic，整个进程就会挂。
+		// 这里兜住，并把下一轮继续跑下去。
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[proxypool] 健康检查协程 panic（已恢复，本轮终止）: %v", rec)
+			}
+		}()
+		// 启动延迟：避开进程刚起来的流量高峰，也给 traffic 代理留出时间。
+		// 用 select 而不是 time.Sleep，这样关闭时能立刻退出、不必等满 90 秒。
+		select {
+		case <-time.After(90 * time.Second):
+		case <-m.proxyHealthStop:
+			return
+		}
+		tick := time.NewTicker(interval)
+		defer tick.Stop()
 		for {
 			m.RunProxyPoolHealthCheck()
-			time.Sleep(interval)
+			select {
+			case <-tick.C:
+			case <-m.proxyHealthStop:
+				return
+			}
 		}
 	}()
 }

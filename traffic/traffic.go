@@ -405,6 +405,12 @@ func (t *Traffic) Close() error {
 		t.closeOnce.Do(func() { close(t.closed) })
 	}
 	t.reaping.Wait()
+	// 关闭 MITM 的监听 socket。原先只关了 SQLite 索引，监听端口要到进程退出才
+	// 由 OS 回收——期间端口仍占着、连接仍会被接受，而索引已经关了，
+	// 于是每条新连接都写进一个已关闭的库。显式关闭让「停止」成为一个干净的边界。
+	if err := t.proxy.Close(); err != nil {
+		log.Printf("[traffic] 关闭代理监听失败（继续关闭索引）: %v", err)
+	}
 	return t.db.Close()
 }
 

@@ -52,7 +52,10 @@ const (
 	// would otherwise scan the same triggers and fire them twice. The per-trigger
 	// watermarks (last_fire / last_finding_id / ...) cannot prevent that on their
 	// own, because the read-then-write is not atomic across processes.
-	schedulerTickLockKey int64 = 7337741004
+	// 7337741005：**曾误用 7337741004**，与 db 包的证据写入锁撞号（两者共享
+	// PostgreSQL 的 advisory lock 空间）。慢的证据写入会让这里的 try 锁失败、
+	// 静默跳过整轮触发器。详见 db/lockkeys.go。
+	schedulerTickLockKey int64 = 7337741005
 )
 
 // trySchedulerTickLock takes the cross-process tick lock without blocking. It

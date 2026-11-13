@@ -274,6 +274,11 @@ type Manager struct {
 	enrich      *enrich.Engine         // engine-side asset auto-completion (DNS/HTTP)
 	interceptor *intercept.Interceptor // user-configured tool-call interception rules
 
+	// proxyHealthStop 关闭时唤醒健康检查协程退出。原先它是裸 go func + time.Sleep，
+	// 既没有 ctx 也没有 join——Manager.Close() 关掉 PG 之后它可能还在跑一轮，
+	// 拿到的连接池已经关了。现在关闭时能立刻退出并被等待。
+	proxyHealthStop chan struct{}
+	proxyHealthWG   sync.WaitGroup
 	// 代理池主动健康检查的开关与节流状态（proxypool_health_* settings）。
 	// proxyCheckInFlight 防止上一轮还没跑完就再起一轮——大池 + 慢代理时一轮
 	// 可能超过巡检间隔，叠加起来会越积越多。
@@ -887,6 +892,12 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 }
 
 func (m *Manager) Close() error {
+	// 先停健康检查并等它退出，再关 PG——顺序反了它会在关闭的连接池上跑一轮。
+	if m.proxyHealthStop != nil {
+		close(m.proxyHealthStop)
+	}
+	m.proxyHealthWG.Wait()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.traffic != nil {
