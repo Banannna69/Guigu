@@ -13,7 +13,7 @@
 [![Node](https://img.shields.io/badge/Node-20+-339933?logo=node.js&logoColor=white)](web/package.json)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue)](CHANGELOG.md)
 
-<img src="screenshots/login.png" alt="Guigu" width="860" />
+<img src="docs/images/screenshot-login.png" alt="Guigu" width="860" />
 
 </div>
 
